@@ -17,7 +17,7 @@ function App() {
   // Function to fetch history (GET request)
   const fetchHistory = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/calculations');
+      const response = await axios.get('/calculations');
       setHistory(response.data);
     } catch (error) {
       console.error('Error fetching history:', error);
@@ -43,12 +43,12 @@ function App() {
       let response;
       if (editingId) {
         // Update existing calculation (PATCH)
-        response = await axios.patch(`http://localhost:3000/calculations/${editingId}`, {
+        response = await axios.patch(`/calculations/${editingId}`, {
           expression,
         });
       } else {
         // Submit new calculation (POST)
-        response = await axios.post('http://localhost:3000/calculations', {
+        response = await axios.post('/calculations', {
           expression,
         });
       }
@@ -72,7 +72,7 @@ function App() {
   // Function to handle delete (DELETE request)
   const handleDelete = async (id) => {
     try {
-      await axios.delete(`http://localhost:3000/calculations/${id}`);
+      await axios.delete(`/calculations/${id}`);
       fetchHistory(); // Refresh history
     } catch (error) {
       console.error('Error deleting calculation:', error);

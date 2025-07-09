@@ -6,11 +6,29 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 	"net/http"
 )
 
+var db *gorm.DB
+
+func initDB() {
+	dsn := "host=localhost user=postgres password=yourpassword dbname=postgres port=5432 sslmode=disable"
+	var err error
+
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	if err := db.AutoMigrate(&Calculation{}); err != nil {
+		log.Fatalf("Failed to migrate table: %v", err)
+	}
+}
+
 type Calculation struct {
-	ID         string `json:"id"`
+	ID         string `gorm:"primaryKey" json:"id"`
 	Expression string `json:"expression"`
 	Result     string `json:"result"`
 }
@@ -18,8 +36,6 @@ type Calculation struct {
 type CalculationRequest struct {
 	Expression string `json:"expression"`
 }
-
-var calculations = []Calculation{}
 
 func calculateExpression(expression string) (string, error) {
 	expr, err := govaluate.NewEvaluableExpression(expression) //Создаем выражение
@@ -34,7 +50,14 @@ func calculateExpression(expression string) (string, error) {
 	return fmt.Sprintf("%v", result), err
 }
 
+//Основные методы ORM - Find, Create, Update, Delete
+
 func getCalculation(c echo.Context) error {
+	var calculations []Calculation
+
+	if err := db.Find(&calculations).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"message": "Failed to get calculation"})
+	}
 	return c.JSON(http.StatusOK, calculations)
 }
 
@@ -54,7 +77,9 @@ func postCalculation(c echo.Context) error {
 		Expression: req.Expression,
 		Result:     result,
 	}
-	calculations = append(calculations, calc)
+	if err := db.Create(&calc).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create calculation"})
+	}
 	return c.JSON(http.StatusCreated, calc)
 }
 
@@ -71,33 +96,41 @@ func patchCalculation(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid expression"})
 	}
 
-	for i, calculation := range calculations {
-		if calculation.ID == id {
-			calculations[i].Expression = req.Expression
-			calculations[i].Result = result
-			return c.JSON(http.StatusOK, calculations[i])
-		}
+	var calc Calculation
+	if err := db.First(&calc, "id = ?", id).Error; err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Could not find expression"})
 	}
-	return c.JSON(http.StatusBadRequest, map[string]string{"error": "Calculation not found"})
+
+	calc.Expression = req.Expression
+	calc.Result = result
+
+	if err := db.Save(&calc).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not update calculation"})
+	}
+
+	return c.JSON(http.StatusOK, calc)
 }
 
 func deleteCalculation(c echo.Context) error {
 	id := c.Param("id")
 
-	for i, calculation := range calculations {
-		if calculation.ID == id {
-			calculations = append(calculations[:i], calculations[i+1:]...)
-			return c.NoContent(http.StatusNoContent)
-		}
+	if err := db.Delete(&Calculation{}, "id = ?", id).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Could not delete calculation"})
 	}
 
-	return c.JSON(http.StatusBadRequest, map[string]string{"error": "Calculation not found"})
+	return c.NoContent(http.StatusNoContent)
 }
 
 func main() {
+	initDB()
+
 	e := echo.New()
 
-	e.Use(middleware.CORS())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:3000"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete},
+	}))
+
 	e.Use(middleware.Logger())
 
 	e.GET("/calculations", getCalculation)
@@ -105,5 +138,7 @@ func main() {
 	e.PATCH("/calculations/:id", patchCalculation)
 	e.DELETE("/calculations/:id", deleteCalculation)
 
-	e.Start("localhost:3000")
+	if err := e.Start(":8080"); err != nil {
+		log.Fatal(err)
+	}
 }
